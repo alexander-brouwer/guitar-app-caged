@@ -301,7 +301,7 @@ const GuitarScaleApp = () => {
     if (baseFret > 1 && !hasOpenStrings) {
       // Barre chord: use baseFret as starting position
       startFret = baseFret;
-      fretSpan = 4; // Show baseFret + 3 more frets
+      fretSpan = 5; // Always show 4 fret spaces (5 lines = 4 spaces)
     } else {
       // Open chord: start at fret 0
       startFret = 0;

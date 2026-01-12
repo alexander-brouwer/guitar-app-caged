@@ -70,14 +70,25 @@ function determineCAGEDShape(
     return 'D';
   }
 
+  // G-shape: Characteristic pattern with all 6 strings
+  // Pattern: [root, root-1, root-3, root-3, root-3, root] (e.g., [3,2,0,0,0,3] or [8,7,5,5,5,8])
+  if (stringCount === 6 && lowestString === 0 && highestString === 5) {
+    const rootFret = absoluteFrets[0];
+    const isGPattern =
+      absoluteFrets[1] === rootFret - 1 &&
+      absoluteFrets[2] === rootFret - 3 &&
+      absoluteFrets[3] === rootFret - 3 &&
+      absoluteFrets[4] === rootFret - 3 &&
+      absoluteFrets[5] === rootFret;
+
+    if (isGPattern) {
+      return 'G';
+    }
+  }
+
   // E-shape: Root on low E string (index 0), typically 5-6 strings
   // Characteristic: Uses low E string as bass note
   if (lowestString === 0 && stringCount >= 4) {
-    // Distinguish from G-shape
-    if (stringCount === 6 && hasOpenStrings && absoluteFrets[5] > 0) {
-      // G-shape: All 6 strings + open strings + high E fretted
-      return 'G';
-    }
     return 'E';
   }
 
@@ -91,12 +102,6 @@ function determineCAGEDShape(
       return 'C';
     }
     return 'A';
-  }
-
-  // G-shape: Uses all 6 strings (or 5-6), distinctive pattern
-  // Characteristic: Full voicing, often with open strings
-  if (stringCount >= 5 && lowestString === 0 && highestString === 5) {
-    return 'G';
   }
 
   // C-shape: Root on A string (index 1), low E muted
@@ -233,68 +238,67 @@ export function getValidatedCAGEDVoicings(
     return [];
   }
 
-  // 2. Get all possible voicings from chords-db
-  let dbVoicings = getChordVoicingsFromDB(root, quality);
-
-  if (dbVoicings.length === 0) {
-    console.warn(`No voicings found in database for ${root}${quality}`);
-    return [];
-  }
-
-  // 3. Filter by fret range
-  dbVoicings = filterVoicingsByPosition(dbVoicings, minFret, maxFret);
-
-  // 4. Sort by difficulty (easier first)
-  dbVoicings = sortByDifficulty(dbVoicings);
-
-  // 4.5. CAGED Template Generation: Add missing shapes for major/minor chords
+  // 2. Determine if this is a major/minor chord (use templates) or extended chord (use chords-db)
   const qualityMapped =
     quality === '' || quality === 'major' ? 'major' :
     quality === 'm' || quality === 'minor' ? 'minor' : null;
 
+  let dbVoicings: ChordPosition[] = [];
+
   if (qualityMapped) {
-    // Check which CAGED shapes are already present in dbVoicings
-    const presentShapes = new Set<'C' | 'A' | 'G' | 'E' | 'D'>();
-    dbVoicings.forEach(voicing => {
-      const shape = determineCAGEDShape(voicing.frets, voicing.baseFret);
-      presentShapes.add(shape);
-    });
-
-    // Generate missing CAGED shapes using templates
+    // ✅ PRIMARY SOURCE: Generate ALL 5 CAGED shapes using templates for major/minor chords
     const allShapes: ('C' | 'A' | 'G' | 'E' | 'D')[] = ['C', 'A', 'G', 'E', 'D'];
+
     allShapes.forEach(shape => {
-      if (!presentShapes.has(shape)) {
-        try {
-          // Generate voicing using template
-          const absoluteFrets = transposeShape(root, shape, qualityMapped);
+      try {
+        // Generate voicing using template
+        const absoluteFrets = transposeShape(root, shape, qualityMapped);
 
-          // Validate: Check for invalid negative frets (negative frets other than -1)
-          const hasInvalidFrets = absoluteFrets.some(fret => fret < -1);
-          if (hasInvalidFrets) {
-            // Skip this voicing - template cannot be transposed to this position
-            return;
-          }
-
-          // Convert absolute frets to ChordPosition format (relative frets + baseFret)
-          const chordPosition = absoluteFretsToChordPosition(absoluteFrets, shape, qualityMapped);
-
-          // Validate converted position
-          const hasInvalidRelativeFrets = chordPosition.frets.some(fret => fret < -1);
-          if (hasInvalidRelativeFrets) {
-            // Skip - conversion produced invalid frets
-            return;
-          }
-
-          // Add to dbVoicings if within fret range
-          if (chordPosition.baseFret >= minFret && chordPosition.baseFret <= maxFret) {
-            dbVoicings.push(chordPosition);
-          }
-        } catch (error) {
-          // Template generation failed (e.g., invalid note)
-          console.warn(`Could not generate ${shape}-shape for ${root}${quality}:`, error);
+        // Validate: Check for invalid negative frets (negative frets other than -1)
+        const hasInvalidFrets = absoluteFrets.some(fret => fret < -1);
+        if (hasInvalidFrets) {
+          // Skip this voicing - template cannot be transposed to this position
+          return;
         }
+
+        // Convert absolute frets to ChordPosition format (relative frets + baseFret)
+        const chordPosition = absoluteFretsToChordPosition(absoluteFrets, shape, qualityMapped);
+
+        // Validate converted position
+        const hasInvalidRelativeFrets = chordPosition.frets.some(fret => fret < -1);
+        if (hasInvalidRelativeFrets) {
+          // Skip - conversion produced invalid frets
+          return;
+        }
+
+        // Add to dbVoicings if within fret range
+        if (chordPosition.baseFret >= minFret && chordPosition.baseFret <= maxFret) {
+          dbVoicings.push(chordPosition);
+        }
+      } catch (error) {
+        // Template generation failed (e.g., invalid note)
+        console.warn(`Could not generate ${shape}-shape for ${root}${quality}:`, error);
       }
     });
+
+    if (dbVoicings.length === 0) {
+      console.warn(`No valid CAGED voicings generated for ${root}${quality}`);
+      return [];
+    }
+  } else {
+    // ⚠️ FALLBACK: Use chords-db for extended chords (7, maj7, sus4, add9, etc.)
+    dbVoicings = getChordVoicingsFromDB(root, quality);
+
+    if (dbVoicings.length === 0) {
+      console.warn(`No voicings found in database for ${root}${quality}`);
+      return [];
+    }
+
+    // Filter by fret range for extended chords
+    dbVoicings = filterVoicingsByPosition(dbVoicings, minFret, maxFret);
+
+    // Sort by difficulty (easier first) for extended chords
+    dbVoicings = sortByDifficulty(dbVoicings);
   }
 
   // 5. Convert to EnhancedChordVoicing and validate
@@ -323,12 +327,32 @@ export function getValidatedCAGEDVoicings(
     };
   });
 
-  // 6. Filter: keep only validated voicings if requested
-  let filteredVoicings = onlyValidated
-    ? enhancedVoicings.filter(v => v.validated)
-    : enhancedVoicings;
+  // 6. Sort by difficulty (easier first) - ALWAYS sort, not just for extended chords!
+  const sortedVoicings = enhancedVoicings.sort((a, b) => {
+    // 1. Open chords are easiest (have open strings)
+    const aHasOpen = a.frets.some(f => f === 0);
+    const bHasOpen = b.frets.some(f => f === 0);
+    if (aHasOpen && !bHasOpen) return -1;
+    if (!aHasOpen && bHasOpen) return 1;
 
-  // 7. Limit to maxVoicings
+    // 2. Lower fret position is easier (prioritize this over barres!)
+    //    E.g., Am at baseFret=1 should come before Dm at baseFret=5
+    if (a.baseFret !== b.baseFret) {
+      return a.baseFret - b.baseFret;
+    }
+
+    // 3. Fewer barres is easier (only matters if baseFret is the same)
+    const aBarres = a.barrePositions?.length || 0;
+    const bBarres = b.barrePositions?.length || 0;
+    return aBarres - bBarres;
+  });
+
+  // 7. Filter: keep only validated voicings if requested
+  let filteredVoicings = onlyValidated
+    ? sortedVoicings.filter(v => v.validated)
+    : sortedVoicings;
+
+  // 8. Limit to maxVoicings
   return filteredVoicings.slice(0, maxVoicings);
 }
 

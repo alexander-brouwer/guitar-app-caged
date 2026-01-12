@@ -5,6 +5,9 @@
  * als relative Fret-Offsets zum Root-Ton.
  */
 
+import { getChordNotes, fretsToNotes } from './musicTheory';
+import { Note } from 'tonal';
+
 export interface CAGEDShapeTemplate {
   /** Fret-Positionen relativ zur Root-Position (0 = Root) */
   frets: number[];
@@ -100,10 +103,12 @@ export const CAGED_SHAPES: Record<
 
 /**
  * Transponiert ein CAGED Shape Template zu einem spezifischen Akkord
+ * MIT TONAL.JS VALIDIERUNG - Stellt sicher, dass alle Noten musikalisch korrekt sind
  *
  * @param rootNote - Root-Note des Zielakkords (z.B. 'C', 'G', 'F#', 'Bb')
  * @param shapeType - CAGED Shape Type ('E', 'A', 'D', 'G', 'C')
  * @param quality - Akkord-Qualität ('major' oder 'minor')
+ * @param options - Optional: { validate: boolean } (default: true)
  * @returns Absolute Fret-Positionen als Array [Low E, A, D, G, B, High E]
  *
  * @example
@@ -119,8 +124,11 @@ export const CAGED_SHAPES: Record<
 export function transposeShape(
   rootNote: string,
   shapeType: 'E' | 'A' | 'D' | 'G' | 'C',
-  quality: 'major' | 'minor'
+  quality: 'major' | 'minor',
+  options: { validate?: boolean } = {}
 ): number[] {
+  const { validate = true } = options;
+
   // 1. Hole das Template für den gewünschten Shape
   const template = CAGED_SHAPES[shapeType][quality];
 
@@ -135,6 +143,55 @@ export function transposeShape(
     if (fret === -1) return -1; // Muted strings bleiben muted
     return fret + offset;
   });
+
+  // 5. ✅ TONAL.JS VALIDIERUNG: Prüfe, ob alle Noten zum Akkord gehören
+  if (validate) {
+    // Hole theoretisch korrekte Noten für diesen Akkord
+    const theoreticalNotes = getChordNotes(rootNote, quality);
+
+    if (theoreticalNotes.length === 0) {
+      console.warn(`⚠️ No theoretical notes found for ${rootNote} ${quality}`);
+      return transposed; // Gebe unvalidiertes Ergebnis zurück
+    }
+
+    // Standard guitar tuning
+    const STANDARD_TUNING = ['E', 'A', 'D', 'G', 'B', 'E'];
+
+    // Validiere jede einzelne Saite
+    const validated = transposed.map((fret, stringIndex) => {
+      if (fret === -1) return -1; // Muted strings bleiben muted
+      if (fret < 0) return -1; // Invalid negative frets werden gemutet
+
+      // Hole die Note, die auf dieser Saite gespielt wird
+      // Erstelle ein Array mit nur diesem einen Fret für fretsToNotes
+      const singleStringFrets = Array(6).fill(-1);
+      singleStringFrets[stringIndex] = fret;
+      const notes = fretsToNotes(singleStringFrets, STANDARD_TUNING);
+
+      if (notes.length === 0) return -1; // Fehler beim Berechnen der Note
+
+      const noteAtFret = notes[0];
+
+      // Prüfe, ob diese Note im Akkord enthalten ist (chromatic comparison)
+      const noteChroma = Note.chroma(noteAtFret);
+      const isValidNote = theoreticalNotes.some(theoreticalNote =>
+        Note.chroma(theoreticalNote) === noteChroma
+      );
+
+      if (!isValidNote) {
+        // ❌ Note gehört nicht zum Akkord - mute diese Saite
+        console.warn(
+          `⚠️ Invalid note detected: ${noteAtFret} (string ${stringIndex + 1}, fret ${fret}) not in ${rootNote}${quality} ` +
+          `(expected: ${theoreticalNotes.join(', ')}). Muting string.`
+        );
+        return -1;
+      }
+
+      return fret; // ✅ Valide Note
+    });
+
+    return validated;
+  }
 
   return transposed;
 }
